@@ -2,14 +2,14 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { AnalysisResult } from "../types";
 
-// Analyze audio emotion using Gemini 3 Pro model for high-quality reasoning
+// 使用 gemini-3-flash-preview 模型。
+// Flash 模型在批量处理音频时具有更高的 Rate Limit，且对情感识别的准确度足以满足需求。
 export const analyzeAudioEmotion = async (base64Data: string, mimeType: string): Promise<AnalysisResult> => {
-  // Always create a new instance right before making an API call to ensure it uses the most up-to-date API key
-  // Use @ts-ignore if process.env is still flagged, though @types/node should fix it
+  // 每次调用时实例化，确保使用最新的 Key
   const ai = new GoogleGenAI({ apiKey: (process.env as any).API_KEY });
   
   const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
+    model: 'gemini-3-flash-preview',
     contents: {
       parts: [
         {
