@@ -5,7 +5,8 @@ import { AnalysisResult } from "../types";
 // Analyze audio emotion using Gemini 3 Pro model for high-quality reasoning
 export const analyzeAudioEmotion = async (base64Data: string, mimeType: string): Promise<AnalysisResult> => {
   // Always create a new instance right before making an API call to ensure it uses the most up-to-date API key
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  // Use @ts-ignore if process.env is still flagged, though @types/node should fix it
+  const ai = new GoogleGenAI({ apiKey: (process.env as any).API_KEY });
   
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
@@ -51,6 +52,10 @@ export const analyzeAudioEmotion = async (base64Data: string, mimeType: string):
     }
   });
 
-  const text = response.text.trim();
-  return JSON.parse(text) as AnalysisResult;
+  const text = response.text || "{}";
+  try {
+    return JSON.parse(text.trim()) as AnalysisResult;
+  } catch (e) {
+    throw new Error("AI 返回了无法解析的格式: " + text);
+  }
 };
