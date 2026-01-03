@@ -7,12 +7,16 @@ export default defineConfig({
   base: './',
   plugins: [react()],
   define: {
-    'process.env.API_KEY': JSON.stringify(process.env.API_KEY)
+    // 允许在前端代码中使用 process.env.API_KEY
+    'process.env.API_KEY': JSON.stringify(process.env.API_KEY || '')
   },
   build: {
     outDir: 'dist',
     sourcemap: false,
-    // 确保 assets 文件夹中的文件名不带过深层次，方便云端管理
     assetsDir: 'assets',
+    // 确保构建时不会因为某些外部库而报错
+    commonjsOptions: {
+      transformMixedEsModules: true,
+    }
   }
 });
