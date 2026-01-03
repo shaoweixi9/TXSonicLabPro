@@ -1,0 +1,5 @@
+{
+  "name": "TX Sonic Lab Pro",
+  "description": "基于 Gemini 原生音频理解能力的批量情绪分析工具，从语调和声学特征中提取情绪维度与强度，支持批量处理和导出。",
+  "requestFramePermissions": []
+}
