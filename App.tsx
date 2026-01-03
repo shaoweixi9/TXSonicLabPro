@@ -36,18 +36,16 @@ declare global {
 const App: React.FC = () => {
   const [files, setFiles] = useState<AudioFile[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [hasKey, setHasKey] = useState<boolean>(true); // 默认环境已有 KEY
+  const [hasKey, setHasKey] = useState<boolean>(true);
   const [showTip, setShowTip] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const checkKeyStatus = async () => {
     try {
-      // 检查是否有用户选择的 key，如果没有则回退到环境 key
       const status = await window.aistudio?.hasSelectedApiKey();
       if (status) setHasKey(true);
     } catch (e) {
-      // 环境 key 始终视为可用
       setHasKey(true);
     }
   };
@@ -85,38 +83,63 @@ const App: React.FC = () => {
     }
   };
 
+  // 辅助函数：等待一段时间
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
   const processBatch = async () => {
     if (isProcessing) return;
     
     setIsProcessing(true);
     const pendingFiles = files.filter(f => f.status === EmotionStatus.IDLE || f.status === EmotionStatus.FAILED);
     
-    for (const audioFile of pendingFiles) {
-      setFiles(prev => prev.map(f => f.id === audioFile.id ? { ...f, status: EmotionStatus.PROCESSING } : f));
+    for (let i = 0; i < pendingFiles.length; i++) {
+      const audioFile = pendingFiles[i];
+      setFiles(prev => prev.map(f => f.id === audioFile.id ? { ...f, status: EmotionStatus.PROCESSING, error: undefined } : f));
       
-      try {
-        const base64 = await fileToBase64(audioFile.file);
-        const result = await analyzeAudioEmotion(base64, audioFile.file.type);
-        
-        setFiles(prev => prev.map(f => f.id === audioFile.id ? { 
-          ...f, 
-          status: EmotionStatus.COMPLETED,
-          emotionType: result.emotionType,
-          emotionLevel: result.emotionLevel,
-          voiceIdentity: result.voiceIdentity,
-          reasoning: result.reasoning
-        } : f));
-      } catch (error: any) {
-        console.error("Analysis Error:", error);
-        if (error.message?.includes("Requested entity was not found")) {
-          alert("API 连接似乎遇到了问题，请尝试切换 Key 或检查网络。");
-          break;
+      let retryCount = 0;
+      const maxRetries = 2;
+      let success = false;
+
+      while (retryCount <= maxRetries && !success) {
+        try {
+          const base64 = await fileToBase64(audioFile.file);
+          const result = await analyzeAudioEmotion(base64, audioFile.file.type);
+          
+          setFiles(prev => prev.map(f => f.id === audioFile.id ? { 
+            ...f, 
+            status: EmotionStatus.COMPLETED,
+            emotionType: result.emotionType,
+            emotionLevel: result.emotionLevel,
+            voiceIdentity: result.voiceIdentity,
+            reasoning: result.reasoning
+          } : f));
+          success = true;
+        } catch (error: any) {
+          console.error(`Analysis Error (File: ${audioFile.name}):`, error);
+          
+          // 如果是频率限制 (429) 错误，尝试等待更久
+          if (error.message?.includes("429") || error.message?.includes("RESOURCE_EXHAUSTED")) {
+            retryCount++;
+            if (retryCount <= maxRetries) {
+              const waitTime = retryCount * 5000; // 阶梯式等待：5秒, 10秒
+              console.log(`命中频率限制，正在进行第 ${retryCount} 次重试，等待 ${waitTime/1000}s...`);
+              await sleep(waitTime);
+              continue;
+            }
+          }
+
+          setFiles(prev => prev.map(f => f.id === audioFile.id ? { 
+            ...f, 
+            status: EmotionStatus.FAILED,
+            error: error.message?.includes("429") ? "频率超限" : "分析失败"
+          } : f));
+          break; // 停止当前文件的重试
         }
-        setFiles(prev => prev.map(f => f.id === audioFile.id ? { 
-          ...f, 
-          status: EmotionStatus.FAILED,
-          error: "分析中断"
-        } : f));
+      }
+
+      // 请求之间的固定间隔，避免被识别为攻击
+      if (i < pendingFiles.length - 1) {
+        await sleep(1500); 
       }
     }
     setIsProcessing(false);
@@ -142,16 +165,8 @@ const App: React.FC = () => {
 
   const getLevelColor = (level: number) => {
     const colors = [
-      'bg-emerald-400', // 1
-      'bg-emerald-500', // 2
-      'bg-green-500',   // 3
-      'bg-lime-500',    // 4
-      'bg-yellow-400',  // 5
-      'bg-amber-500',   // 6
-      'bg-orange-500',  // 7
-      'bg-orange-600',  // 8
-      'bg-red-500',     // 9
-      'bg-rose-600'     // 10
+      'bg-emerald-400', 'bg-emerald-500', 'bg-green-500', 'bg-lime-500', 'bg-yellow-400',
+      'bg-amber-500', 'bg-orange-500', 'bg-orange-600', 'bg-red-500', 'bg-rose-600'
     ];
     return colors[Math.max(0, Math.min(level - 1, 9))];
   };
@@ -181,11 +196,11 @@ const App: React.FC = () => {
             className="flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-bold transition-all border border-slate-200"
           >
             <ArrowsRightLeftIcon className="w-3.5 h-3.5" />
-            Switch Key
+            切换 Key
           </button>
           <div className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold bg-white text-emerald-600 border border-emerald-100 shadow-sm">
             <ShieldCheckIcon className="w-4 h-4" />
-            云端API已经链接
+            API 已链接
           </div>
           <button onClick={() => setShowTip(!showTip)} className="text-slate-400 hover:text-blue-600 p-2 hover:bg-white rounded-full transition-colors">
             <QuestionMarkCircleIcon className="w-5 h-5" />
@@ -205,7 +220,7 @@ const App: React.FC = () => {
               Next-Gen Audio Intelligence
             </div>
             <p className="text-slate-600 text-base leading-relaxed font-medium">
-              基于 <span className="text-blue-600 font-bold">Gemini 原生多模态音频理解能力</span>，Sonic Lab 绕过传统的语音转文字流程，直接通过声学物理特征——如音调、语流节奏、共鸣感及细微的情感波动，深度解析音频背后的真实情绪底色。
+              基于 <span className="text-blue-600 font-bold">Gemini 原生多模态 Flash 引擎</span>，Sonic Lab 绕过传统的语音转文字流程，直接通过声学物理特征深度解析音频背后的真实情绪底色。
             </p>
           </div>
           <div className="flex gap-8 border-l border-slate-100 pl-8 h-full items-center shrink-0">
@@ -224,10 +239,12 @@ const App: React.FC = () => {
       {showTip && (
         <div className="bg-white border-l-4 border-blue-500 p-4 rounded-xl mb-8 text-sm text-slate-600 flex gap-4 animate-in slide-in-from-top-4 duration-300 shadow-sm">
           <InformationCircleIcon className="w-5 h-5 text-blue-500 shrink-0" />
-          <p>
-            <b className="text-slate-900">操作指引：</b> 批量上传音频后点击“开始AI批量解析”。系统将自动为您提取音轨背后的角色画像与情绪梯度。
-            <br/>强度配色：系统采用 <span className="font-bold text-emerald-600">1-10级全色域阶梯</span>，颜色越趋向深红，代表音频中的情绪张力越强。
-          </p>
+          <div className="flex-1">
+            <p className="mb-1"><b className="text-slate-900">频率限制说明：</b></p>
+            <p className="text-xs">
+              为了保证解析稳定性，我们采用了 <b>Flash 高性能模型</b>。如遇“频率超限”，系统会自动重试并增加延迟。建议批量任务保持在 15 个以内以获得最佳体验。
+            </p>
+          </div>
         </div>
       )}
 
@@ -252,7 +269,7 @@ const App: React.FC = () => {
             }`}
           >
             {isProcessing ? <ArrowPathIcon className="w-4 h-4 animate-spin" /> : <PlayIcon className="w-4 h-4 fill-current" />}
-            {isProcessing ? '正在智能解析...' : '开始AI批量解析'}
+            {isProcessing ? '智能解析中...' : '开始AI批量解析'}
           </button>
         </div>
 
@@ -263,7 +280,7 @@ const App: React.FC = () => {
             className="px-4 py-2 text-slate-600 hover:text-blue-600 disabled:opacity-30 text-sm font-bold flex items-center gap-2 transition-colors"
           >
             <ArrowDownTrayIcon className="w-4 h-4" />
-            导出数据
+            导出结果
           </button>
           <div className="w-px h-6 bg-slate-100"></div>
           <button 
@@ -313,9 +330,9 @@ const App: React.FC = () => {
                           <span className="text-[10px] text-slate-400 font-mono tracking-tighter uppercase">{file.size}</span>
                         </div>
                       </td>
-                      <td className="px-6 py-5 align-middle">
+                      <td className="px-6 py-5 align-middle text-center">
                         <div className="flex justify-center">
-                          <StatusChip status={file.status} />
+                          <StatusChip status={file.status} error={file.error} />
                         </div>
                       </td>
                       <td className="px-6 py-5 align-middle text-center">
@@ -372,7 +389,7 @@ const App: React.FC = () => {
                                 className="w-full flex items-center justify-center gap-2 py-2 bg-slate-50 hover:bg-blue-50 text-slate-500 hover:text-blue-600 border border-slate-200 hover:border-blue-100 rounded-xl text-[11px] font-black transition-all"
                               >
                                 {copiedId === file.id ? (
-                                  <><CheckIcon className="w-4 h-4 text-emerald-500" /> 分析已存入剪贴板</>
+                                  <><CheckIcon className="w-4 h-4 text-emerald-500" /> 已存入剪贴板</>
                                 ) : (
                                   <><ClipboardDocumentIcon className="w-4 h-4" /> 复制分析全文</>
                                 )}
@@ -399,9 +416,9 @@ const App: React.FC = () => {
         )}
       </div>
 
-      <footer className="mt-auto py-12 flex flex-col items-center gap-2 border-t border-slate-100 mt-12">
+      <footer className="mt-auto py-12 flex flex-col items-center gap-2 border-t border-slate-100">
         <p className="text-[11px] text-slate-500 font-bold uppercase tracking-widest text-center">
-          © 2026 Sonic Lab Pro | Powered by Gemini 3 Pro Preview
+          © 2026 Sonic Lab Pro | Powered by Gemini 3 Flash
         </p>
         <p className="text-[10px] text-slate-400 font-medium uppercase tracking-[0.2em] opacity-60">
           Experimental Audio Perception Environment
@@ -411,7 +428,7 @@ const App: React.FC = () => {
   );
 };
 
-const StatusChip: React.FC<{ status: EmotionStatus }> = ({ status }) => {
+const StatusChip: React.FC<{ status: EmotionStatus, error?: string }> = ({ status, error }) => {
   const base = "inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-black uppercase border whitespace-nowrap h-[24px]";
   switch (status) {
     case EmotionStatus.IDLE:
@@ -421,7 +438,7 @@ const StatusChip: React.FC<{ status: EmotionStatus }> = ({ status }) => {
     case EmotionStatus.COMPLETED:
       return <span className={`${base} bg-emerald-50 text-emerald-600 border-emerald-100`}><CheckCircleIcon className="w-3 h-3" />已完成</span>;
     case EmotionStatus.FAILED:
-      return <span className={`${base} bg-rose-50 text-rose-600 border-rose-100`}><XCircleIcon className="w-3 h-3" />解析失败</span>;
+      return <span className={`${base} bg-rose-50 text-rose-600 border-rose-100`} title={error}><XCircleIcon className="w-3 h-3" />{error || "失败"}</span>;
     default:
       return null;
   }
